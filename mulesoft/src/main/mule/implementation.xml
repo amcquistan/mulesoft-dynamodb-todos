@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:dynamodb="http://www.mulesoft.org/schema/mule/dynamodb" xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+http://www.mulesoft.org/schema/mule/dynamodb http://www.mulesoft.org/schema/mule/dynamodb/current/mule-dynamodb.xsd">
+	<flow name="createTodoFlow" doc:id="059e5988-4d60-4b47-b68a-b9d5b2ec79c7" >
+		<ee:transform doc:name="Request Transform" doc:id="6aed9ca9-ea18-4148-80b8-f4daa8c0b305" >
+			<ee:message >
+				<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+---
+{
+	userID: {S: attributes.headers['x-user-id']},
+	created: {N: payload.created as String},
+	todo: {S: payload.todo},
+	completed: {Bool: if (payload.completed?) payload.completed else false}
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+		<dynamodb:put-item doc:name="Put item" doc:id="2ba07f87-f565-4707-868c-8885be6a4edc" config-ref="Amazon_DynamoDB_Configuration" tableName="mulesoft-todos"/>
+		<set-payload value="Todo created" doc:name="Set Payload" doc:id="6f094389-7697-461c-b341-ff640c885ffe" />
+	</flow>
+	<flow name="listTodosFlow" doc:id="f5e7283e-40d0-472b-80c6-1224afca167a" >
+		<ee:transform doc:name="Request Transform" doc:id="96475b95-0e99-4890-ab4c-c359289006b1" >
+			<ee:message >
+				<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+---
+{
+	keyExpression: 'userID = :userID',
+	attrs: { ":userID": {"S": attributes.headers['x-user-id']}}
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+		<dynamodb:query doc:name="Query" doc:id="cf5cb4cb-c7b9-4c8b-93db-38ccfa0f5478" config-ref="Amazon_DynamoDB_Configuration" keyConditionExpression="#[payload.keyExpression]" tableName="mulesoft-todos" attributeValues="#[payload.attrs]" select="ALL_ATTRIBUTES"/>
+		<ee:transform doc:name="Response Transform" doc:id="49d1d161-86cd-4fcc-bd09-d3f8d9338ecb" >
+			<ee:message >
+				<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+---
+{
+	items: payload.items default [] map {
+		userID: $.userID.s,
+		created: $.created.n as Number,
+		completed: $.completed.bool as Boolean default false,
+		todo: $.todo.s
+	},
+	count: payload.count,
+	lastEvaluatedKey: payload.lastEvaluatedKey
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+	</flow>
+	<flow name="getTodoFlow" doc:id="035d4639-e729-48ef-aeb0-9f935686370a" >
+		<ee:transform doc:name="Request Transform" doc:id="f2dae583-ff45-42d1-923a-6cc4f4ce45c6" >
+			<ee:message >
+				<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+---
+{
+	userID: {"S": attributes.headers['x-user-id']},
+	created: {"N": attributes.uriParams.created}
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+		<dynamodb:get-item doc:name="Get item" doc:id="c55499cc-46a9-4c41-a616-c40ce84e55e6" config-ref="Amazon_DynamoDB_Configuration" tableName="mulesoft-todos"/>
+		<ee:transform doc:name="Response Transform" doc:id="ee5b6a00-7699-4b57-8b53-6fe190788154" >
+			<ee:message >
+				<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+---
+{
+	userID: payload.item.userID.s,
+	created: payload.item.created.n as Number,
+	completed: payload.item.completed.bool as Boolean,
+	todo: payload.item.todo.s
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+	</flow>
+	<flow name="updateTodoFlow" doc:id="22800e35-030c-4bb9-b23b-038743f5fd44" >
+		<ee:transform doc:name="Request Transform" doc:id="5d5477c6-27f7-44b4-a513-b7637ac48a0a" >
+			<ee:message >
+				<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+fun parseUpdate(payload) = do {
+	if (payload.todo? and payload.completed?)
+	  {
+	  	updateExpression: 'SET todo = :todo, completed = :completed',
+	  	attrs: {
+	  		":todo": {"S": payload.todo},
+	  		":completed": {"Bool": payload.completed}
+	  	}
+	  }
+	else if (payload.todo?)
+	  {
+	  	updateExpression: 'SET todo = :todo',
+	  	attrs: {
+	  		":todo": {"S": payload.todo}
+	  	}
+	  }
+	else
+	  {
+	  	updateExpression: 'SET completed = :completed',
+	  	attrs: {
+	  		":completed": {"Bool": payload.completed}
+	  	}
+	  }
+}
+---
+{
+	key: {
+		"userID": {"S": attributes.headers['x-user-id']},
+		"created": {"N": attributes.uriParams.created}
+	},
+	update: parseUpdate(payload)
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+		<dynamodb:update-item doc:name="Update item" doc:id="b6641a3a-bf97-4a09-b763-923b1fd2d592" config-ref="Amazon_DynamoDB_Configuration" tableName="mulesoft-todos" returnValues="ALL_NEW" updateExpression="#[payload.update.updateExpression]" attributeValues="#[payload.update.attrs]">
+			<dynamodb:key ><![CDATA[#[payload.key]]]></dynamodb:key>
+		</dynamodb:update-item>
+		<ee:transform doc:name="Response Transform" doc:id="9ea4482b-e8c9-4e70-840d-3c281e9dc691" >
+			<ee:message >
+				<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+---
+{
+	userID: payload.attributes.userID.s,
+	created: payload.attributes.created.n as Number,
+	completed: payload.attributes.completed.bool as Boolean,
+	todo: payload.attributes.todo.s
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+	</flow>
+	<flow name="deleteTodoFlow" doc:id="8bd139a2-497a-4ef4-b3f5-80eee5bfb712" >
+		<ee:transform doc:name="Request Transform" doc:id="11d1fdc0-42e0-46c8-923a-016ec14d7e35" >
+			<ee:message >
+				<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+---
+{
+	userID: {"S": attributes.headers['x-user-id']},
+	created: {"N": attributes.uriParams.created}
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+		<dynamodb:delete-item doc:name="Delete item" doc:id="971b30e9-c143-456e-b455-fcf60c1c1bde" config-ref="Amazon_DynamoDB_Configuration" tableName="mulesoft-todos"/>
+		<set-payload value="Todo deleted" doc:name="Set Payload" doc:id="6ca831c7-ff77-495f-8b8c-0c1727a7270b" />
+	</flow>
+</mule>
